@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--
+  Content-Security-Policy:
+  - No inline event handlers; all JS is in this <script> block (unsafe-inline needed for
+    the single script tag; in production serve via a separate .js file and drop unsafe-inline)
+  - Fonts loaded from Google; no other external scripts
+-->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'self'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; img-src 'self' data:; connect-src 'none';">
+<title>ParentGuard — Family Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+  :root {
+    --bg:#07090F; --surface:#0C1220; --card:#101826; --card2:#141F35;
+    --border:#1A2640; --border2:#243354;
+    --accent:#6366F1; --green:#10B981; --amber:#F59E0B; --red:#EF4444; --pink:#EC4899;
+    --text:#EDF2FF; --muted:#4A5C7A; --subtle:#7A90B3;
+    --mono:'DM Mono',monospace; --head:'Syne',sans-serif; --body:'Inter',sans-serif;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--body);background:var(--bg);color:var(--text);min-height:100vh;display:flex;}
+
+  /* ─ Sidebar ─ */
+  .sidebar{width:232px;min-width:232px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto;}
+  .brand{padding:20px 18px 18px;border-bottom:1px solid var(--border);}
+  .brand-row{display:flex;align-items:center;gap:10px;}
+  .brand-ico{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#6366F1,#8B5CF6);display:flex;align-items:center;justify-content:center;font-size:18px;}
+  .brand-name{font-family:var(--head);font-size:17px;font-weight:800;letter-spacing:-.3px;}
+  .brand-sub{font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:2px;}
+  .child-card{margin:12px 12px 4px;padding:11px 13px;background:var(--card2);border:1px solid var(--border);border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px;}
+  .child-ava{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#6366F1,#EC4899);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;color:#fff;flex-shrink:0;}
+  .child-status{font-size:10px;color:var(--green);display:flex;align-items:center;gap:4px;margin-top:2px;}
+  .sdot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 2s infinite;}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+  .nav-lbl{padding:14px 20px 5px;font-size:9.5px;font-weight:700;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;}
+  .ni{display:flex;align-items:center;gap:9px;padding:8px 12px;margin:1px 8px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;color:var(--subtle);transition:all .14s;border:none;background:none;width:calc(100% - 16px);text-align:left;font-family:var(--body);}
+  .ni .ico{width:20px;text-align:center;font-size:15px;}
+  .ni:hover{background:rgba(99,102,241,.08);color:var(--text);}
+  .ni.active{background:rgba(99,102,241,.14);color:var(--accent);}
+  .ni .cnt{margin-left:auto;padding:1px 7px;border-radius:100px;font-size:10px;font-weight:700;font-family:var(--mono);background:rgba(99,102,241,.2);color:var(--accent);}
+
+  /* ─ Main ─ */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;overflow-y:auto;}
+  .topbar{padding:15px 26px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:100;}
+  .topbar-title{font-family:var(--head);font-size:18px;font-weight:700;}
+  .tr{display:flex;align-items:center;gap:10px;}
+  .sync-lbl{font-size:11px;color:var(--muted);font-family:var(--mono);}
+  .btn{padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:all .15s;font-family:var(--body);}
+  .btn-p{background:var(--accent);color:#fff;}
+  .btn-p:hover{background:#5254CC;transform:translateY(-1px);}
+  .btn-g{background:transparent;color:var(--subtle);border:1px solid var(--border);}
+  .btn-g:hover{border-color:var(--accent);color:var(--accent);}
+  .btn-d{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3);}
+  .btn-sm{padding:5px 11px;font-size:11.5px;}
+  .content{padding:24px 26px;}
+
+  /* ─ Stats ─ */
+  .sg{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:13px;margin-bottom:24px;}
+  .stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:17px;position:relative;overflow:hidden;transition:transform .2s;}
+  .stat:hover{transform:translateY(-2px);}
+  .stat::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+  .ci::before{background:var(--accent)}.cg::before{background:var(--green)}.ca::before{background:var(--amber)}.cp::before{background:var(--pink)}.cr::before{background:var(--red)}
+  .sl{font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:7px;}
+  .sv{font-family:var(--head);font-size:27px;font-weight:800;line-height:1;margin-bottom:3px;}
+  .ss{font-size:11px;color:var(--muted);}
+  .si{position:absolute;top:15px;right:15px;font-size:21px;opacity:.12;}
+
+  /* ─ Layout ─ */
+  .tc{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px;}
+  .full{margin-bottom:18px;}
+  .panel{background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+  .ph{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .pt{font-family:var(--head);font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;}
+  .badge{padding:2px 8px;border-radius:100px;font-size:10px;font-weight:700;font-family:var(--mono);}
+  .bi{background:rgba(99,102,241,.15);color:var(--accent)}.bg{background:rgba(16,185,129,.15);color:var(--green)}.ba{background:rgba(245,158,11,.15);color:var(--amber)}.bp{background:rgba(236,72,153,.15);color:var(--pink)}.br{background:rgba(239,68,68,.15);color:var(--red)}
+
+  /* ─ App filter pills ─
+     FIX: changed from overflow-x:auto + flex-wrap:nowrap (scrolling)
+     to flex-wrap:wrap so pills flow onto new lines instead of overflowing
+  ─ */
+  .pill-bar{
+    display:flex;
+    flex-wrap:wrap;          /* wrap onto new lines instead of scrolling */
+    gap:6px;
+    padding:12px 20px;
+    border-bottom:1px solid var(--border);
+  }
+  .pill{
+    display:flex;align-items:center;gap:5px;
+    padding:5px 12px;border-radius:100px;
+    font-size:11px;font-weight:600;cursor:pointer;
+    border:1.5px solid var(--border);background:transparent;color:var(--subtle);
+    /* removed white-space:nowrap so long app names can wrap if needed */
+    transition:all .14s;font-family:var(--body);
+  }
+  .pill:hover{border-color:var(--border2);color:var(--text);}
+  .pill.on{background:rgba(99,102,241,.14);border-color:var(--accent);color:var(--accent);}
+  .pill-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+
+  /* ─ Message list ─ */
+  .ml{max-height:470px;overflow-y:auto;}
+  .mi{padding:11px 20px;border-bottom:1px solid var(--border);display:flex;gap:11px;transition:background .13s;cursor:pointer;}
+  .mi:hover{background:rgba(255,255,255,.02);}
+  .mi:last-child{border-bottom:none;}
+  .mav{width:31px;height:31px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;margin-top:2px;}
+  .mb{flex:1;min-width:0;}
+  .mh{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
+  .mc{font-size:13px;font-weight:600;color:var(--text);}
+  .mt{font-size:10px;color:var(--muted);font-family:var(--mono);}
+  .mar{display:flex;align-items:center;gap:6px;margin-bottom:3px;}
+  .atag{font-size:9px;font-weight:700;letter-spacing:.03em;padding:1px 6px;border-radius:4px;font-family:var(--mono);}
+  .dtag{font-size:9px;font-weight:600;color:var(--muted);}
+  .ds{color:var(--accent);} .dr{color:var(--green);}
+  .mx{font-size:12.5px;color:var(--subtle);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mx.red{color:var(--muted);font-style:italic;}
+
+  /* ─ Calls ─ */
+  .ci2{padding:11px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:11px;transition:background .13s;}
+  .ci2:hover{background:rgba(255,255,255,.02);}
+  .ci2:last-child{border-bottom:none;}
+  .cico{width:33px;height:33px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+  .cico.i{background:rgba(16,185,129,.12)}.cico.o{background:rgba(99,102,241,.12)}.cico.m{background:rgba(239,68,68,.12)}
+  .cn{font-size:13px;font-weight:600;} .cm{font-size:10px;color:var(--muted);font-family:var(--mono);} .cd{font-size:11px;color:var(--subtle);font-family:var(--mono);}
+
+  /* ─ App usage ─ */
+  .aui{padding:10px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:11px;}
+  .aui:last-child{border-bottom:none;}
+  .auico{width:33px;height:33px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;}
+  .aunm{font-size:12.5px;font-weight:600;margin-bottom:5px;display:flex;align-items:center;gap:6px;}
+  .bar-bg{background:var(--border);border-radius:100px;height:3px;}
+  .bar-fg{height:3px;border-radius:100px;transition:width 1.2s cubic-bezier(.4,0,.2,1);}
+  .autm{font-size:11px;font-family:var(--mono);white-space:nowrap;}
+
+  /* ─ Block list ─ */
+  .bki{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:11px;}
+  .bki:last-child{border-bottom:none;}
+  .bkn{font-size:13px;font-weight:600;} .bkm{font-size:10px;color:var(--muted);}
+  .tog{width:37px;height:20px;border-radius:100px;background:var(--border);position:relative;cursor:pointer;transition:background .2s;border:none;flex-shrink:0;}
+  .tog.on{background:var(--accent);}
+  .tog::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .2s;}
+  .tog.on::after{transform:translateX(17px);}
+
+  /* ─ Screen time ─ */
+  .rr{display:flex;align-items:center;padding:20px;gap:26px;}
+  .rw{position:relative;width:108px;height:108px;flex-shrink:0;}
+  .rw svg{transform:rotate(-90deg);}
+  .rc{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;}
+  .rv{font-family:var(--head);font-size:20px;font-weight:800;line-height:1;}
+  .rl{font-size:9px;color:var(--muted);font-family:var(--mono);}
+  .str{flex:1;}
+  .strow{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border);}
+  .strow:last-child{border-bottom:none;}
+  .stk{font-size:11px;color:var(--muted);} .stv{font-size:12.5px;font-weight:600;font-family:var(--mono);}
+
+  /* ─ Thread ─ */
+  .cv{padding:16px 20px;max-height:520px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
+  .bubble{max-width:72%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.5;}
+  .bubble.r{background:var(--card2);border:1px solid var(--border);align-self:flex-start;border-bottom-left-radius:4px;}
+  .bubble.s{background:rgba(99,102,241,.18);border:1px solid rgba(99,102,241,.25);align-self:flex-end;border-bottom-right-radius:4px;}
+  .bm{font-size:10px;color:var(--muted);margin-top:4px;font-family:var(--mono);}
+
+  /* ─ Alert bar ─ */
+  .ab{background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.2);border-radius:10px;padding:10px 15px;display:flex;align-items:center;gap:10px;margin-bottom:20px;font-size:12.5px;color:var(--amber);}
+
+  /* ─ Privacy notice ─ */
+  .pn{background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.14);border-radius:9px;padding:10px 15px;margin:12px 20px 0;font-size:12px;color:var(--subtle);line-height:1.6;}
+
+  /* ─ Modal ─ */
+  .ov{position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(5px);display:flex;align-items:center;justify-content:center;z-index:999;opacity:0;pointer-events:none;transition:opacity .2s;}
+  .ov.open{opacity:1;pointer-events:all;}
+  .modal{background:var(--card2);border:1px solid var(--border);border-radius:16px;padding:26px;width:480px;max-width:90vw;transform:scale(.95);transition:transform .2s;}
+  .ov.open .modal{transform:scale(1);}
+  .modal-t{font-family:var(--head);font-size:17px;font-weight:700;margin-bottom:16px;}
+  .fg{margin-bottom:13px;}
+  .fl{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;display:block;}
+  .fi{width:100%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;font-family:var(--body);outline:none;transition:border-color .15s;}
+  .fi:focus{border-color:var(--accent);}
+  .ma{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
+  .fc{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 15px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;}
+  .fcl{font-size:10px;color:var(--muted);margin-bottom:3px;}
+  .fcv{font-family:var(--mono);font-size:18px;font-weight:500;letter-spacing:.2em;color:var(--accent);}
+  .cpb{padding:5px 10px;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.3);border-radius:6px;color:var(--accent);font-size:11px;cursor:pointer;font-family:var(--mono);transition:all .14s;}
+
+  ::-webkit-scrollbar{width:3px;height:3px;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:100px;}
+  @media(max-width:860px){.tc{grid-template-columns:1fr;}.sidebar{display:none;}}
+</style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="brand">
+    <div class="brand-row">
+      <div class="brand-ico">🛡️</div>
+      <div><div class="brand-name">ParentGuard</div><div class="brand-sub">FAMILY DASHBOARD</div></div>
+    </div>
+  </div>
+  <div style="padding:0 10px 6px;">
+    <div class="child-card">
+      <div class="child-ava">E</div>
+      <div><div style="font-size:13px;font-weight:600;">Emma</div><div class="child-status"><span class="sdot"></span>Online now</div></div>
+      <span style="margin-left:auto;color:var(--muted);font-size:17px;">⌄</span>
+    </div>
+  </div>
+  <div class="nav-lbl">Monitor</div>
+  <button class="ni active" data-nav="overview"><span class="ico">📊</span>Overview</button>
+  <button class="ni" data-nav="sms"><span class="ico">💬</span>SMS &amp; Calls</button>
+  <button class="ni" data-nav="appmsgs"><span class="ico">📲</span>App Messages<span class="cnt">83</span></button>
+  <button class="ni" data-nav="usage"><span class="ico">📱</span>App Usage</button>
+  <div class="nav-lbl">Controls</div>
+  <button class="ni" data-nav="blocking"><span class="ico">🚫</span>App Blocking</button>
+  <button class="ni" data-nav="screentime"><span class="ico">⏱</span>Screen Time</button>
+  <button class="ni" data-nav="alerts"><span class="ico">🔔</span>Alerts</button>
+  <div class="nav-lbl">Setup</div>
+  <button class="ni" data-modal="mo-setup"><span class="ico">🔗</span>Link Device</button>
+  <button class="ni"><span class="ico">⚙️</span>Settings</button>
+</nav>
+
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-title" id="vtitle">Overview</div>
+    <div class="tr">
+      <span class="sync-lbl">Last sync: 2 min ago</span>
+      <button class="btn btn-g btn-sm" id="sync-btn">↻ Sync</button>
+      <button class="btn btn-p btn-sm" data-modal="mo-setup">+ Add Child</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- OVERVIEW -->
+    <div id="vw-overview" class="vw">
+      <div class="ab">
+        ⚠️ <strong>Alert:</strong> Emma tried to open TikTok (blocked) 3× today ·
+        <a href="#" data-nav="blocking" style="color:var(--amber);text-decoration:underline">manage rules</a>
+      </div>
+      <div class="sg">
+        <div class="stat ci"><div class="sl">SMS Today</div><div class="sv">47</div><div class="ss">+12 from yesterday</div><div class="si">💬</div></div>
+        <div class="stat cp"><div class="sl">App Messages</div><div class="sv">83</div><div class="ss">9 platforms active</div><div class="si">📲</div></div>
+        <div class="stat cg"><div class="sl">Calls Today</div><div class="sv">6</div><div class="ss">38 min total</div><div class="si">📞</div></div>
+        <div class="stat ca"><div class="sl">Screen Time</div><div class="sv">3h 42m</div><div class="ss">Limit: 5h/day</div><div class="si">⏱</div></div>
+        <div class="stat cr"><div class="sl">Blocked Attempts</div><div class="sv">3</div><div class="ss">TikTok ×3</div><div class="si">🚫</div></div>
+      </div>
+      <div class="tc">
+        <div class="panel">
+          <div class="ph"><div class="pt">📲 Recent App Messages</div><button class="btn btn-g btn-sm" data-nav="appmsgs">All →</button></div>
+          <div class="ml" id="ov-appmsgs"></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div class="pt">📞 Recent Calls</div><span class="badge bg">6 today</span></div>
+          <div id="ov-calls"></div>
+        </div>
+      </div>
+      <div class="full panel">
+        <div class="ph"><div class="pt">📱 App Usage</div><span class="badge ba">3h 42m</span></div>
+        <div id="ov-usage"></div>
+      </div>
+    </div>
+
+    <!-- SMS & CALLS -->
+    <div id="vw-sms" class="vw" style="display:none">
+      <div class="tc">
+        <div class="panel">
+          <div class="ph"><div class="pt">💬 SMS Messages</div><span class="badge bi">47 today</span></div>
+          <div class="ml" id="all-sms"></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div class="pt">📞 Call Log</div><span class="badge bg">6 today</span></div>
+          <div id="all-calls"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- APP MESSAGES -->
+    <div id="vw-appmsgs" class="vw" style="display:none">
+      <div class="panel">
+        <div class="ph">
+          <div class="pt">📲 App Messages<span class="badge bp" id="amsg-cnt">83 today</span></div>
+          <button class="btn btn-g btn-sm" id="convo-hint-btn">💬 Conversation View</button>
+        </div>
+        <div class="pill-bar" id="pill-bar"></div>
+        <div class="pn">
+          ℹ️ <strong>How messages are captured:</strong>
+          Incoming messages are read from app notifications. Sent messages are captured via
+          Accessibility Service when the app is open on screen. Apps with notification privacy
+          enabled (Signal "no content" mode, Snapchat) will display <em>[Content hidden]</em>
+          — enable notification previews in the app to see content.
+        </div>
+        <div id="amsg-list" class="ml" style="max-height:520px;"></div>
+        <div id="thread-view" style="display:none;">
+          <div class="ph" style="background:var(--card2);">
+            <div class="pt" id="thread-title">Conversation</div>
+            <button class="btn btn-g btn-sm" id="close-thread-btn">← Back</button>
+          </div>
+          <div class="cv" id="thread-msgs"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- APP USAGE -->
+    <div id="vw-usage" class="vw" style="display:none">
+      <div class="panel">
+        <div class="ph"><div class="pt">📱 App Usage — Today</div><span class="badge ba">3h 42m total</span></div>
+        <div id="all-usage"></div>
+      </div>
+    </div>
+
+    <!-- BLOCKING -->
+    <div id="vw-blocking" class="vw" style="display:none">
+      <div class="panel">
+        <div class="ph">
+          <div class="pt">🚫 App Blocking</div>
+          <button class="btn btn-p btn-sm" data-modal="mo-block">+ Block App</button>
+        </div>
+        <div id="block-list"></div>
+      </div>
+    </div>
+
+    <!-- SCREEN TIME -->
+    <div id="vw-screentime" class="vw" style="display:none">
+      <div class="tc">
+        <div class="panel">
+          <div class="ph"><div class="pt">⏱ Today's Usage</div></div>
+          <div class="rr">
+            <div class="rw">
+              <svg width="108" height="108" viewBox="0 0 108 108">
+                <circle cx="54" cy="54" r="45" fill="none" stroke="var(--border)" stroke-width="9"/>
+                <circle cx="54" cy="54" r="45" fill="none" stroke="var(--amber)" stroke-width="9"
+                  stroke-dasharray="283" stroke-dashoffset="77" stroke-linecap="round"/>
+              </svg>
+              <div class="rc"><div class="rv">73%</div><div class="rl">of limit</div></div>
+            </div>
+            <div class="str">
+              <div class="strow"><span class="stk">Used today</span><span class="stv">3h 42m</span></div>
+              <div class="strow"><span class="stk">Daily limit</span><span class="stv">5h 00m</span></div>
+              <div class="strow"><span class="stk">Remaining</span><span class="stv" style="color:var(--green)">1h 18m</span></div>
+              <div class="strow"><span class="stk">Bedtime lock</span><span class="stv">9:00 PM</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div class="pt">🌙 Bedtime Schedule</div></div>
+          <div style="padding:18px;">
+            <div class="fg"><label class="fl">Daily Limit (minutes)</label><input class="fi" type="number" value="300" min="30" max="1440"></div>
+            <div class="fg"><label class="fl">Bedtime Start</label><input class="fi" type="time" value="21:00"></div>
+            <div class="fg"><label class="fl">Bedtime End</label><input class="fi" type="time" value="07:00"></div>
+            <button class="btn btn-p" style="width:100%;" id="save-screentime-btn">Save Limits</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ALERTS -->
+    <div id="vw-alerts" class="vw" style="display:none">
+      <div class="panel">
+        <div class="ph"><div class="pt">🔔 Alert History</div></div>
+        <div id="alerts-list"></div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<!-- MODALS -->
+<div class="ov" id="mo-setup">
+  <div class="modal">
+    <div class="modal-t">🔗 Link Child's Device</div>
+    <p style="font-size:12.5px;color:var(--subtle);margin-bottom:16px;line-height:1.6;">
+      Install <strong>ParentGuard</strong> on your child's Android phone.
+      During setup, enter the Family Code below.
+    </p>
+    <div class="fc">
+      <div><div class="fcl">Family Code</div><div class="fcv">PG-7X4K2M</div></div>
+      <button class="cpb" id="copy-code-btn">COPY</button>
+    </div>
+    <div class="fg">
+      <label class="fl">Child's Name</label>
+      <input class="fi" type="text" id="new-child-name" placeholder="e.g. Emma" maxlength="50">
+    </div>
+    <div style="font-size:11.5px;color:var(--muted);background:var(--surface);border-radius:8px;padding:10px 13px;line-height:1.6;">
+      ℹ️ Setup grants: SMS access · Call log · Usage Stats ·
+      <strong>Notification Access</strong> (WhatsApp, Telegram, Discord, etc.) ·
+      Two Accessibility Services. All steps must be completed by a parent on the child's device.
+    </div>
+    <div class="ma">
+      <button class="btn btn-g" data-close-modal="mo-setup">Cancel</button>
+      <button class="btn btn-p" data-close-modal="mo-setup">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="ov" id="mo-block">
+  <div class="modal">
+    <div class="modal-t">🚫 Block an App</div>
+    <div class="fg">
+      <label class="fl">App Name</label>
+      <input class="fi" id="bname" type="text" placeholder="e.g. TikTok" maxlength="80">
+    </div>
+    <div class="fg">
+      <label class="fl">Package Name (optional)</label>
+      <input class="fi" id="bpkg" type="text" placeholder="e.g. com.zhiliaoapp.musically" maxlength="200">
+    </div>
+    <div style="display:flex;gap:14px;">
+      <div class="fg" style="flex:1">
+        <label class="fl">Block From</label>
+        <input class="fi" id="bfrom" type="time" value="22:00">
+      </div>
+      <div class="fg" style="flex:1">
+        <label class="fl">Block Until</label>
+        <input class="fi" id="buntil" type="time" value="07:00">
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--surface);border-radius:8px;">
+      <button class="tog" id="allday-tog"></button>
+      <span style="font-size:12.5px;color:var(--subtle)">Block all day (ignore schedule)</span>
+    </div>
+    <div class="ma">
+      <button class="btn btn-g" data-close-modal="mo-block">Cancel</button>
+      <button class="btn btn-d" id="do-add-block">Block App</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── Security: HTML entity escaping ────────────────────────────────────────────
+// FIX: Previously user-controlled strings (contact names, message bodies, app names,
+// phone numbers) were interpolated raw into innerHTML, enabling stored XSS if any
+// content from Firebase/SMS contained HTML metacharacters.
+// ALL data values rendered into innerHTML must go through escHtml().
+function escHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── App registry (static trusted data — does not need escaping) ───────────────
+const AINFO = {
+  WhatsApp:  {e:'💬', c:'#25D366', bg:'rgba(37,211,102,.12)'},
+  WeChat:    {e:'💚', c:'#07C160', bg:'rgba(7,193,96,.12)'},
+  Telegram:  {e:'✈️', c:'#2AABEE', bg:'rgba(42,171,238,.12)'},
+  Messenger: {e:'🟣', c:'#0099FF', bg:'rgba(0,153,255,.12)'},
+  Snapchat:  {e:'👻', c:'#FFFC00', bg:'rgba(255,252,0,.1)'},
+  Instagram: {e:'📸', c:'#E1306C', bg:'rgba(225,48,108,.12)'},
+  Signal:    {e:'🔒', c:'#3A76F0', bg:'rgba(58,118,240,.12)'},
+  Session:   {e:'🧅', c:'#00F782', bg:'rgba(0,247,130,.1)'},
+  Discord:   {e:'🎮', c:'#5865F2', bg:'rgba(88,101,242,.12)'},
+  Slack:     {e:'💼', c:'#8B5CF6', bg:'rgba(139,92,246,.12)'},
+  Teams:     {e:'🟦', c:'#6264A7', bg:'rgba(98,100,167,.15)'},
+};
+
+// ── Demo data ─────────────────────────────────────────────────────────────────
+const APP_MSGS = [
+  {app:'WhatsApp', contact:'Jake T.',         dir:'recv', time:'4:05 PM', text:'haha did you see mrs. peterson today lol',  vis:true},
+  {app:'WhatsApp', contact:'Jake T.',         dir:'sent', time:'4:07 PM', text:'omg yes she was SO confused',               vis:true},
+  {app:'WhatsApp', contact:'Sophie 💕',      dir:'recv', time:'3:55 PM', text:'ok so study group tomorrow still on?',       vis:true},
+  {app:'WhatsApp', contact:'Sophie 💕',      dir:'sent', time:'3:57 PM', text:'yes for sure! 4pm at library?',              vis:true},
+  {app:'Snapchat', contact:'Lily K.',         dir:'recv', time:'3:42 PM', text:'[Content hidden by Snapchat]',              vis:false},
+  {app:'Snapchat', contact:'Lily K.',         dir:'recv', time:'3:41 PM', text:'[Content hidden by Snapchat]',              vis:false},
+  {app:'Instagram',contact:'@jake.t22',       dir:'recv', time:'3:30 PM', text:'have you seen this reel 😭😭',               vis:true},
+  {app:'Instagram',contact:'@jake.t22',       dir:'sent', time:'3:32 PM', text:'SENDING THIS TO EVERYONE',                  vis:true},
+  {app:'Telegram', contact:'Study Group 📚',  dir:'recv', time:'2:45 PM', text:'Chapter 7 summary is in the group files',   vis:true},
+  {app:'Telegram', contact:'Study Group 📚',  dir:'recv', time:'2:40 PM', text:'Anyone want to video call tonight?',        vis:true},
+  {app:'Discord',  contact:'#general • Gaming Hub', dir:'recv', time:'2:15 PM', text:'anyone on for Minecraft tonight?',    vis:true},
+  {app:'Discord',  contact:'#general • Gaming Hub', dir:'sent', time:'2:17 PM', text:'I can be on after 7!',               vis:true},
+  {app:'Signal',   contact:'Mom',             dir:'recv', time:'1:30 PM', text:'[Content hidden by Signal]',               vis:false},
+  {app:'WhatsApp', contact:'Jake T.',         dir:'recv', time:'12:50 PM',text:'lunch tomorrow?',                           vis:true},
+  {app:'Messenger',contact:'Grandma Carol',   dir:'recv', time:'11:00 AM',text:"Can't wait to see you this weekend sweetheart! 💕", vis:true},
+  {app:'Teams',    contact:'Ms. Johnson – Math', dir:'recv', time:'9:15 AM', text:'Reminder: quiz next Tuesday covers sections 4.1–4.4', vis:true},
+  {app:'WeChat',   contact:'Amy Z.',          dir:'recv', time:'8:55 AM', text:'did you finish the project slides?',        vis:true},
+  {app:'Slack',    contact:'#class-2025 · School', dir:'recv', time:'8:30 AM', text:'Field trip permission slips due Friday!', vis:true},
+  {app:'Session',  contact:'Unknown',         dir:'recv', time:'Yesterday',text:'[Content hidden by Session]',             vis:false},
+];
+
+const SMS_DATA = [
+  {contact:'Mom',     ini:'M', dir:'in',  time:'3:42 PM',  text:"Don't forget your homework tonight!"},
+  {contact:'Jake T.', ini:'J', dir:'out', time:'3:30 PM',  text:'haha ok see you at practice'},
+  {contact:'Sophie',  ini:'S', dir:'in',  time:'2:15 PM',  text:'what did you get on the math test'},
+  {contact:'Jake T.', ini:'J', dir:'in',  time:'1:58 PM',  text:'wanna play roblox after school?'},
+  {contact:'Dad',     ini:'D', dir:'out', time:'1:20 PM',  text:"yeah i'm on the bus now"},
+  {contact:'Sophie',  ini:'S', dir:'out', time:'12:45 PM', text:'meet at lunch table?'},
+  {contact:'Grandma', ini:'G', dir:'in',  time:'11:00 AM', text:'Happy Tuesday sweetheart! 🌟'},
+];
+
+const CALLS_DATA = [
+  {contact:'Mom',     type:'i', dur:'5:22',  time:'4:10 PM',  num:'+1 (555) 234-5678'},
+  {contact:'Jake T.', type:'o', dur:'12:04', time:'3:50 PM',  num:'+1 (555) 876-5432'},
+  {contact:'Unknown', type:'m', dur:'0:00',  time:'2:00 PM',  num:'+1 (555) 000-1234'},
+  {contact:'Dad',     type:'i', dur:'8:15',  time:'12:30 PM', num:'+1 (555) 234-5679'},
+  {contact:'Sophie',  type:'o', dur:'3:40',  time:'9:15 AM',  num:'+1 (555) 111-2222'},
+];
+
+const USAGE_DATA = [
+  {name:'YouTube',   time:75, ico:'▶️', c:'#EF4444'},
+  {name:'WhatsApp',  time:58, ico:'💬', c:'#25D366'},
+  {name:'Snapchat',  time:45, ico:'👻', c:'#FFFC00'},
+  {name:'Instagram', time:42, ico:'📸', c:'#E1306C'},
+  {name:'Discord',   time:30, ico:'🎮', c:'#5865F2'},
+  {name:'Minecraft', time:28, ico:'⛏️', c:'#10B981'},
+  {name:'Telegram',  time:20, ico:'✈️', c:'#2AABEE'},
+  {name:'Chrome',    time:18, ico:'🌐', c:'#6366F1'},
+  {name:'Teams',     time:14, ico:'🟦', c:'#6264A7'},
+  {name:'TikTok',    time:0,  ico:'🎵', c:'#EF4444', blocked:true},
+];
+
+// FIX: BLOCKED_DATA is app state only, not rendered directly. renderBlocks() uses
+// the index to identify items, not any user-provided ID, avoiding DOM-injection issues.
+const BLOCKED_DATA = [
+  {name:'TikTok',  pkg:'com.zhiliaoapp.musically', sched:'All day',   attempts:3, ico:'🎵'},
+  {name:'Discord', pkg:'com.discord',               sched:'9PM – 7AM', attempts:0, ico:'🎮'},
+];
+
+const ALERTS_DATA = [
+  {time:'3:50 PM',   ico:'🚫', msg:'Tried to open TikTok (blocked)'},
+  {time:'2:40 PM',   ico:'🚫', msg:'Tried to open TikTok (blocked)'},
+  {time:'1:10 PM',   ico:'🚫', msg:'Tried to open TikTok (blocked)'},
+  {time:'9:00 AM',   ico:'⚠️', msg:'Screen time: 2 hours remaining'},
+  {time:'Yesterday', ico:'🔋', msg:'Device battery low (8%)'},
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let activeFilter = 'All';
+
+// ── Render helpers ────────────────────────────────────────────────────────────
+
+// FIX: renderAppMsg previously put contact/text/app raw into innerHTML.
+// Now every user-derived string is wrapped in escHtml().
+// FIX: onclick attribute previously embedded contact/app names via string
+// interpolation — a vector for attribute injection. Replaced with data-* attributes;
+// click handling is done via event delegation (see initEventDelegation()).
+function renderAppMsg(m) {
+  const info = AINFO[m.app] || {e:'💬', c:'var(--accent)', bg:'rgba(99,102,241,.12)'};
+  const ini = escHtml(m.contact.charAt(0).toUpperCase());
+  const hiddenBadge = !m.vis
+    ? '<span style="font-size:9px;color:var(--muted);font-family:var(--mono);">🔒 HIDDEN</span>'
+    : '';
+  return `<div class="mi" data-app="${escHtml(m.app)}" data-contact="${escHtml(m.contact)}" role="button" tabindex="0">
+    <div class="mav" style="background:${info.bg};color:${info.c};">${ini}</div>
+    <div class="mb">
+      <div class="mh">
+        <span class="mc">${escHtml(m.contact)}</span>
+        <span class="mt">${escHtml(m.time)}</span>
+      </div>
+      <div class="mar">
+        <span class="atag" style="background:${info.bg};color:${info.c};">${info.e} ${escHtml(m.app)}</span>
+        <span class="dtag ${m.dir==='sent'?'ds':'dr'}">${m.dir==='sent'?'→ SENT':'← RECV'}</span>
+        ${hiddenBadge}
+      </div>
+      <div class="mx${!m.vis?' red':''}">${escHtml(m.text)}</div>
+    </div>
+  </div>`;
+}
+
+function renderSms(m) {
+  const out = m.dir === 'out';
+  return `<div class="mi">
+    <div class="mav" style="background:rgba(${out?'99,102,241':'16,185,129'},.12);color:${out?'var(--accent)':'var(--green)'};">${escHtml(m.ini)}</div>
+    <div class="mb">
+      <div class="mh">
+        <span class="mc">${escHtml(m.contact)}</span>
+        <span class="mt">${escHtml(m.time)}</span>
+      </div>
+      <div class="mar">
+        <span class="dtag ${out?'ds':'dr'}">${out?'→ SENT':'← RECV'}</span>
+      </div>
+      <div class="mx">${escHtml(m.text)}</div>
+    </div>
+  </div>`;
+}
+
+function renderCall(c) {
+  const ico = {i:'📲', o:'📤', m:'📵'};
+  return `<div class="ci2">
+    <div class="cico ${c.type}">${ico[c.type] || '📱'}</div>
+    <div style="flex:1;">
+      <div class="cn">${escHtml(c.contact)}</div>
+      <div class="cm">${escHtml(c.num)} · ${escHtml(c.time)}</div>
+    </div>
+    <div class="cd">${escHtml(c.dur)}</div>
+  </div>`;
+}
+
+function renderUsage(el, data) {
+  const mx = Math.max(...data.map(a => a.time), 1);
+  el.innerHTML = data.map(a => {
+    const pct   = (a.time / mx) * 100;
+    const h     = Math.floor(a.time / 60), m = a.time % 60;
+    const tstr  = a.blocked ? 'BLOCKED' : (h > 0 ? `${h}h ${m}m` : `${m}m`);
+    const col   = a.blocked ? '#EF4444' : a.c;
+    const blockBadge = a.blocked
+      ? '<span style="font-size:9px;background:rgba(239,68,68,.12);color:#EF4444;padding:1px 5px;border-radius:4px;font-weight:700;">BLOCKED</span>'
+      : '';
+    return `<div class="aui">
+      <div class="auico" style="background:${a.c}22;">${a.ico}</div>
+      <div style="flex:1;min-width:0;">
+        <div class="aunm">${escHtml(a.name)}${blockBadge}</div>
+        <div class="bar-bg"><div class="bar-fg" style="width:${pct}%;background:${col};"></div></div>
+      </div>
+      <div class="autm" style="color:${a.blocked?'#EF4444':'var(--muted)'};">${tstr}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderBlocks() {
+  const el = document.getElementById('block-list');
+  if (!BLOCKED_DATA.length) {
+    el.innerHTML = '<div style="padding:32px;text-align:center;color:var(--muted);">No apps blocked yet.</div>';
+    return;
+  }
+  // FIX: a.name, a.pkg, a.sched were previously rendered raw, meaning HTML typed into
+  // the "Block App" form would execute. All are now escaped.
+  el.innerHTML = BLOCKED_DATA.map((a, i) => `<div class="bki">
+    <span style="font-size:19px;">${a.ico}</span>
+    <div style="flex:1;">
+      <div class="bkn">${escHtml(a.name)}</div>
+      <div class="bkm">${escHtml(a.pkg)} · ${escHtml(a.sched)}${
+        a.attempts > 0
+          ? ` · <span style="color:var(--red);">${escHtml(String(a.attempts))} blocked today</span>`
+          : ''
+      }</div>
+    </div>
+    <button class="tog on" data-toggle-idx="${i}" aria-label="Toggle block"></button>
+    <button class="btn btn-d btn-sm" data-remove-idx="${i}">Remove</button>
+  </div>`).join('');
+}
+
+function renderAlerts() {
+  document.getElementById('alerts-list').innerHTML = ALERTS_DATA.map(a =>
+    `<div class="bki">
+      <span style="font-size:19px;">${a.ico}</span>
+      <div style="flex:1;">
+        <div class="bkn" style="font-size:12.5px;">${escHtml(a.msg)}</div>
+        <div class="bkm">${escHtml(a.time)}</div>
+      </div>
+    </div>`
+  ).join('');
+}
+
+// ── Filter pills ──────────────────────────────────────────────────────────────
+function buildPills() {
+  // AINFO keys are static trusted strings, so no escaping needed for the app name
+  // in the pill label/dot, but we still use escHtml for safety.
+  const apps = ['All', ...Object.keys(AINFO).filter(a => APP_MSGS.some(m => m.app === a))];
+  document.getElementById('pill-bar').innerHTML = apps.map(a => {
+    const info = AINFO[a];
+    const cnt  = a === 'All' ? APP_MSGS.length : APP_MSGS.filter(m => m.app === a).length;
+    const dot  = info ? `<span class="pill-dot" style="background:${info.c};"></span>` : '';
+    const lbl  = info ? `${info.e} ${escHtml(a)}` : escHtml(a);
+    return `<button class="pill${a === activeFilter ? ' on' : ''}" data-filter="${escHtml(a)}">
+      ${dot}${lbl} <span style="font-size:9.5px;color:var(--muted);">${cnt}</span>
+    </button>`;
+  }).join('');
+}
+
+function renderMsgList() {
+  const msgs = activeFilter === 'All' ? APP_MSGS : APP_MSGS.filter(m => m.app === activeFilter);
+  document.getElementById('amsg-list').innerHTML = msgs.map(renderAppMsg).join('');
+  document.getElementById('amsg-cnt').textContent = `${msgs.length} today`;
+}
+
+// ── Thread view ───────────────────────────────────────────────────────────────
+function openThread(app, contact) {
+  const msgs = APP_MSGS.filter(m => m.app === app && m.contact === contact);
+  if (!msgs.length) return;
+  const info = AINFO[app] || {e:'💬'};
+
+  // FIX: thread title previously used contact/app raw; now uses escHtml via DOM text node.
+  const titleEl = document.getElementById('thread-title');
+  titleEl.textContent = '';
+  const emojiSpan = document.createElement('span');
+  emojiSpan.textContent = `${info.e} ${contact}`;
+  const metaSpan = document.createElement('span');
+  metaSpan.style.cssText = 'font-size:11px;color:var(--muted);';
+  metaSpan.textContent = ` via ${app}`;
+  titleEl.append(emojiSpan, metaSpan);
+
+  // FIX: thread message bubbles previously rendered m.text and m.contact raw.
+  // Now built via DOM API to avoid any HTML injection.
+  const threadMsgs = document.getElementById('thread-msgs');
+  threadMsgs.innerHTML = '';
+  msgs.forEach(m => {
+    const s = m.dir === 'sent';
+    const bubble = document.createElement('div');
+    bubble.className = `bubble ${s ? 's' : 'r'}`;
+
+    if (!m.vis) {
+      const italic = document.createElement('span');
+      italic.style.cssText = 'color:var(--muted);font-style:italic;';
+      italic.textContent = m.text;
+      bubble.appendChild(italic);
+    } else {
+      bubble.appendChild(document.createTextNode(m.text));
+    }
+
+    const meta = document.createElement('div');
+    meta.className = 'bm';
+    meta.textContent = `${s ? 'Emma' : m.contact} · ${m.time}`;
+    bubble.appendChild(meta);
+    threadMsgs.appendChild(bubble);
+  });
+
+  document.getElementById('amsg-list').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'block';
+}
+
+function closeThread() {
+  document.getElementById('amsg-list').style.display = 'block';
+  document.getElementById('thread-view').style.display = 'none';
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+const VTITLES = {
+  overview:'Overview', sms:'SMS & Calls', appmsgs:'App Messages',
+  usage:'App Usage', blocking:'App Blocking', screentime:'Screen Time', alerts:'Alerts'
+};
+
+function go(id) {
+  // Validate id is a known view — prevents DOM-clobbering if id came from user input
+  if (!VTITLES[id]) return;
+  document.querySelectorAll('.vw').forEach(v => v.style.display = 'none');
+  const view = document.getElementById(`vw-${id}`);
+  if (view) view.style.display = 'block';
+  document.getElementById('vtitle').textContent = VTITLES[id];
+  document.querySelectorAll('.ni').forEach(b => {
+    b.classList.toggle('active', b.dataset.nav === id);
+  });
+}
+
+function openOv(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('open');
+}
+function closeOv(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('open');
+}
+
+// ── Event Delegation ──────────────────────────────────────────────────────────
+// FIX: All interactive elements now use data-* attributes and a central delegation
+// handler rather than inline onclick with interpolated strings. This eliminates the
+// onclick attribute injection surface entirely.
+function initEventDelegation() {
+  document.addEventListener('click', (e) => {
+    const t = e.target;
+
+    // Nav buttons (sidebar)
+    const navBtn = t.closest('[data-nav]');
+    if (navBtn) { go(navBtn.dataset.nav); return; }
+
+    // Modal open buttons
+    const modalBtn = t.closest('[data-modal]');
+    if (modalBtn) { openOv(modalBtn.dataset.modal); return; }
+
+    // Modal close buttons
+    const closeBtn = t.closest('[data-close-modal]');
+    if (closeBtn) { closeOv(closeBtn.dataset.closeModal); return; }
+
+    // Click outside modal to close
+    if (t.classList.contains('ov')) { t.classList.remove('open'); return; }
+
+    // App message row → open thread
+    const msgRow = t.closest('.mi[data-app]');
+    if (msgRow) {
+      openThread(msgRow.dataset.app, msgRow.dataset.contact);
+      return;
+    }
+
+    // Filter pills
+    const pill = t.closest('[data-filter]');
+    if (pill) {
+      activeFilter = pill.dataset.filter;
+      buildPills();
+      renderMsgList();
+      return;
+    }
+
+    // Block list toggle
+    const tog = t.closest('[data-toggle-idx]');
+    if (tog) { tog.classList.toggle('on'); return; }
+
+    // Block list remove
+    const removeBtn = t.closest('[data-remove-idx]');
+    if (removeBtn) {
+      const idx = parseInt(removeBtn.dataset.removeIdx, 10);
+      if (!isNaN(idx) && idx >= 0 && idx < BLOCKED_DATA.length) {
+        BLOCKED_DATA.splice(idx, 1);
+        renderBlocks();
+        toast('App unblocked');
+      }
+      return;
+    }
+
+    // All-day toggle in modal
+    if (t.id === 'allday-tog') { t.classList.toggle('on'); return; }
+
+    // Close thread
+    if (t.id === 'close-thread-btn') { closeThread(); return; }
+
+    // Sync button
+    if (t.id === 'sync-btn') { doSync(t); return; }
+
+    // Copy family code
+    if (t.id === 'copy-code-btn') {
+      navigator.clipboard.writeText('PG-7X4K2M').catch(() => {});
+      t.textContent = '✓ COPIED';
+      setTimeout(() => { t.textContent = 'COPY'; }, 2000);
+      return;
+    }
+
+    // Save screen time
+    if (t.id === 'save-screentime-btn') {
+      toast('Screen time limits saved ✓');
+      return;
+    }
+
+    // Add block app
+    if (t.id === 'do-add-block') { addBlock(); return; }
+
+    // Convo hint
+    if (t.id === 'convo-hint-btn') {
+      toast('Tap any message row to view as a conversation thread');
+      return;
+    }
+  });
+
+  // Keyboard accessibility for message rows
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const msgRow = e.target.closest('.mi[data-app]');
+      if (msgRow) { e.preventDefault(); openThread(msgRow.dataset.app, msgRow.dataset.contact); }
+    }
+  });
+}
+
+// ── Add Block ─────────────────────────────────────────────────────────────────
+function addBlock() {
+  // FIX: previously name/pkg/sched went straight from input into BLOCKED_DATA and
+  // renderBlocks() inlined them. Now we read from inputs, store as plain text,
+  // and renderBlocks() escapes via escHtml() before writing to innerHTML.
+  const nameInput = document.getElementById('bname');
+  const pkgInput  = document.getElementById('bpkg');
+  const n = nameInput.value.trim();
+  if (!n) { nameInput.focus(); toast('Please enter an app name'); return; }
+
+  // Validate package name format (alphanumeric, dots, underscores only)
+  const pkg = pkgInput.value.trim();
+  if (pkg && !/^[a-zA-Z0-9._]+$/.test(pkg)) {
+    toast('Package name may only contain letters, numbers, dots, and underscores');
+    return;
+  }
+
+  const allDay = document.getElementById('allday-tog').classList.contains('on');
+  const from   = document.getElementById('bfrom').value;
+  const until  = document.getElementById('buntil').value;
+
+  BLOCKED_DATA.push({
+    name:     n,
+    pkg:      pkg || `com.example.${n.toLowerCase().replace(/\s+/g, '')}`,
+    sched:    allDay ? 'All day' : `${from}–${until}`,
+    attempts: 0,
+    ico:      '📱'
+  });
+
+  closeOv('mo-block');
+  renderBlocks();
+  toast(`${n} blocked ✓`);
+  nameInput.value = '';
+  pkgInput.value  = '';
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────────
+function doSync(btn) {
+  btn.textContent = '↻ Syncing…';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = '↻ Sync';
+    btn.disabled = false;
+    toast('Device synced! ✓');
+  }, 1400);
+}
+
+// ── Toast notification ────────────────────────────────────────────────────────
+// FIX: toast previously set textContent-like string via style.cssText and
+// appended directly. Now uses textContent to set message (safe), no innerHTML.
+function toast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:10px;font-size:12.5px;font-weight:600;z-index:9999;';
+  t.textContent = msg;  // textContent is safe — no HTML parsing
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2700);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  initEventDelegation();
+
+  // Render all panels
+  document.getElementById('ov-appmsgs').innerHTML = APP_MSGS.slice(0, 5).map(renderAppMsg).join('');
+  document.getElementById('ov-calls').innerHTML   = CALLS_DATA.slice(0, 4).map(renderCall).join('');
+  renderUsage(document.getElementById('ov-usage'), USAGE_DATA);
+
+  document.getElementById('all-sms').innerHTML   = SMS_DATA.map(renderSms).join('');
+  document.getElementById('all-calls').innerHTML = CALLS_DATA.map(renderCall).join('');
+
+  buildPills();
+  renderMsgList();
+
+  renderUsage(document.getElementById('all-usage'), USAGE_DATA);
+  renderBlocks();
+  renderAlerts();
+
+  // Animate usage bars after first paint
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.bar-fg').forEach(b => {
+      const w = b.style.width;
+      b.style.width = '0';
+      requestAnimationFrame(() => { b.style.width = w; });
+    });
+  });
+});
+</script>
+</body>
+</html>
