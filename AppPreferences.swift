@@ -102,6 +102,20 @@ final class AppPreferences {
             if !keysToKeep.contains(key) { defaults.removeObject(forKey: key) }
         }
     }
+
+    /// Read usage records written by the DeviceActivityMonitorExtension via the shared
+    /// App Group UserDefaults. The extension writes JSON-encoded [AppUsageRecord] data
+    /// under the key "usage_records_today".
+    /// FIX: Previously accessed via a BackgroundTaskManager extension that called
+    /// UserDefaults(suiteName:) on every access — creating a new instance each time.
+    /// This method reuses the cached `defaults` property instead.
+    func readUsageRecordsToday() -> [AppUsageRecord] {
+        guard let data = defaults.data(forKey: "usage_records_today"),
+              let records = try? JSONDecoder().decode([AppUsageRecord].self, from: data) else {
+            return []
+        }
+        return records
+    }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
