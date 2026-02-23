@@ -1,442 +1,393 @@
-# 🛡️ ParentGuard
+# 🛡️ ParentGuard — Android & iOS
 
-**Transparent, consent-based parental monitoring for Android.**
-
-ParentGuard lets parents monitor their child's SMS, calls, third-party app messages, and screen time from a web dashboard — with real-time app blocking and bedtime controls. Every component is designed to be disclosed: Android's foreground service requirement keeps a persistent notification on the child's device at all times, and the setup wizard is intended to be completed by a parent, with the child present.
+**Transparent, consent-based parental monitoring. Native apps for both platforms sharing a single Firebase backend.**
 
 ---
 
-## Table of Contents
+## Platform Comparison
 
-1. [Features](#features)
-2. [Architecture overview](#architecture-overview)
-3. [Project structure](#project-structure)
-4. [Prerequisites](#prerequisites)
-5. [Setup guide](#setup-guide)
-   - [Firebase project](#step-1-firebase-project)
-   - [Firestore security rules](#step-2-firestore-security-rules)
-   - [Build the Android app](#step-3-build-the-android-app)
-   - [Install on child's device](#step-4-install-on-childs-device)
-   - [Open the parent dashboard](#step-5-open-the-parent-dashboard)
-6. [Monitored messaging apps](#monitored-messaging-apps)
-7. [How message capture works](#how-message-capture-works)
-8. [Parental controls](#parental-controls)
-9. [Required permissions](#required-permissions)
-10. [Security notes](#security-notes)
-11. [Technical reference](#technical-reference)
-12. [Legal & ethical requirements](#legal--ethical-requirements)
-13. [Troubleshooting](#troubleshooting)
+| Capability | Android | iOS |
+|---|:---:|:---:|
+| SMS message content | ✅ | ❌ |
+| Call log | ✅ | ❌ |
+| WhatsApp / Telegram / Discord messages | ✅ | ❌ |
+| App usage time | ✅ | ✅ |
+| Block specific apps | ✅ | ✅ |
+| Block app categories | ✅ | ✅ |
+| Daily screen time limit | ✅ | ✅ |
+| Bedtime enforcement | ✅ | ✅ |
+| Real-time push alerts to parent | ✅ | ✅ |
+| Background execution | Foreground service + WorkManager | BGTask + DeviceActivityMonitor extension |
+| Runs after device restart | ✅ BootReceiver | ✅ BGTask auto-reschedules |
+| Survives battery optimizer | ✅ WorkManager backstop | ✅ BGTask + extension is separate process |
 
----
-
-## Features
-
-### Monitoring
-| Capability | How |
-|---|---|
-| SMS messages | Android SMS content provider — sender, body, direction, timestamp |
-| Call log | Android CallLog provider — number, contact name, duration, type |
-| App messages | NotificationListenerService (incoming) + AccessibilityService (sent) |
-| Screen time | UsageStatsManager — per-app time on screen, updated hourly |
-| Device status | Online/offline state, battery level, last sync time |
-
-### Messaging apps monitored
-WhatsApp · WeChat · Telegram · Messenger · Snapchat · Instagram DMs · Signal · Session · Discord · Slack · Microsoft Teams *(plus WhatsApp Business, Viber, LINE, Kik)*
-
-### Parental controls
-| Control | Details |
-|---|---|
-| App blocking | Block any app all-day or on a time schedule (e.g. TikTok after 9 PM) |
-| Screen time limit | Set a daily minute cap; device locks when reached |
-| Bedtime mode | Phone locks at a set time each night and unlocks in the morning |
-
-### Parent dashboard
-- Per-app message filter pills with live counts
-- Conversation thread view for any contact on any platform
-- Flagged content indicators for privacy-redacted messages (Signal, Snapchat)
-- Real-time alert feed (blocked app attempts, screen time warnings, battery)
-- App usage bar chart with today's totals
+> **Why the difference?** iOS sandboxing is fundamental to Apple's security model.  
+> No entitlement or API exists to read SMS, call logs, or other apps' messages on iOS — by design.  
+> The Android version uses `READ_SMS`, `READ_CALL_LOG`, `NotificationListenerService`, and `AccessibilityService`, none of which exist on iOS.  
+> For full message monitoring, Android is required.
 
 ---
 
-## Architecture Overview
-
-```
-┌─────────────────────────────┐       ┌──────────────────────────────┐
-│      Child's Android        │       │       Parent's Browser        │
-│                             │       │                              │
-│  ┌─────────────────────┐   │       │   parent-dashboard.html      │
-│  │  MonitoringService  │   │       │   (connects to Firestore)    │
-│  │  (foreground, 15m)  │   │       └──────────────┬───────────────┘
-│  └────────┬────────────┘   │                      │
-│           │                │       ┌──────────────▼───────────────┐
-│  ┌────────▼────────────┐   │       │         Firebase             │
-│  │   DataCollectors    │   │       │                              │
-│  │  SMS · Calls · Apps │──────────▶  Firestore (families/{id}/   │
-│  └─────────────────────┘   │       │    children/{id}/...)        │
-│                             │       │                              │
-│  ┌─────────────────────┐   │       │  Auth (parent & child UIDs)  │
-│  │ MessagingNotification│──────────▶                              │
-│  │ Listener (incoming) │   │       └──────────────────────────────┘
-│  └─────────────────────┘   │
-│                             │
-│  ┌─────────────────────┐   │
-│  │  AppReadingA11y     │   │
-│  │  Service (sent msgs)│   │
-│  └─────────────────────┘   │
-│                             │
-│  ┌─────────────────────┐   │
-│  │ AppBlockerA11y      │   │
-│  │ Service (blocking)  │   │
-│  └─────────────────────┘   │
-└─────────────────────────────┘
-```
-
-Data flows one way: child device → Firestore → parent dashboard. The parent dashboard writes only to `blockedApps` and `screenTimeLimits`; the child device reads those collections to enforce controls.
-
----
-
-## Project Structure
+## Repository Structure
 
 ```
 ParentGuard/
-├── app/
-│   ├── build.gradle
-│   └── src/main/
-│       ├── AndroidManifest.xml
-│       ├── java/com/parentguard/monitor/
-│       │   ├── DataModels.kt                    — All data classes + MessagingApps registry
-│       │   ├── AppPreferences.kt                — SharedPreferences wrapper (singleton)
-│       │   ├── DataCollectors.kt                — Reads SMS, call log, UsageStats
-│       │   ├── FirebaseRepository.kt            — All Firestore read/write (chunked batches)
-│       │   ├── MonitoringService.kt             — Foreground service; drives 15-min sync loop
-│       │   ├── MessagingNotificationListener.kt — NotificationListenerService for 11+ apps
-│       │   ├── AppReadingAccessibilityService.kt— Reads sent messages from open app screens
-│       │   ├── AppBlockerAccessibilityService.kt— Intercepts and blocks restricted apps
-│       │   ├── Receivers.kt                     — SmsReceiver (real-time) + BootReceiver
-│       │   ├── SetupActivity.kt                 — 4-step setup wizard (parent-run)
-│       │   └── AppBlockedActivity.kt            — Full-screen block overlay for child
-│       └── res/
-│           ├── layout/
-│           │   ├── activity_setup.xml
-│           │   └── activity_app_blocked.xml
-│           ├── values/
-│           │   ├── strings.xml
-│           │   └── themes.xml
-│           └── xml/
-│               ├── accessibility_service_config.xml   — App blocker config
-│               └── accessibility_reader_config.xml    — Message reader config
-├── parent-dashboard.html                        — Parent monitoring web UI
-├── build.gradle
-└── README.md
+├── ParentGuard-Android/          ← Kotlin / Android Studio project
+│   ├── app/
+│   │   ├── build.gradle
+│   │   └── src/main/
+│   │       ├── AndroidManifest.xml
+│   │       └── java/com/parentguard/monitor/
+│   │           ├── DataModels.kt
+│   │           ├── AppPreferences.kt
+│   │           ├── DataCollectors.kt            — SMS, calls, app usage
+│   │           ├── FirebaseRepository.kt
+│   │           ├── MonitoringService.kt          — Foreground service (continuous)
+│   │           ├── SyncWorker.kt                 — WorkManager backstop
+│   │           ├── MessagingNotificationListener.kt — 3rd-party app messages (incoming)
+│   │           ├── AppReadingAccessibilityService.kt — 3rd-party app messages (sent)
+│   │           ├── AppBlockerAccessibilityService.kt — App blocking
+│   │           ├── Receivers.kt                  — SMS real-time + Boot
+│   │           ├── SetupActivity.kt
+│   │           └── AppBlockedActivity.kt
+│   └── parent-dashboard.html
+│
+├── ParentGuard-iOS/              ← Swift / Xcode project
+│   ├── Package.swift
+│   ├── Info.plist
+│   ├── ParentGuard.entitlements
+│   ├── ParentGuardApp.swift      — Entry point, AppDelegate, background registration
+│   ├── Core/
+│   │   ├── DataModels.swift
+│   │   ├── AppPreferences.swift  — Shared App Group UserDefaults
+│   │   ├── BackgroundTaskManager.swift — BGTaskScheduler
+│   │   ├── FamilyControlsManager.swift — FamilyControls + ManagedSettings
+│   │   └── FirebaseRepository.swift
+│   ├── Views/
+│   │   ├── ContentView.swift     — Tab navigation + all dashboard views
+│   │   └── SetupView.swift       — 4-step onboarding wizard
+│   └── DeviceActivityExtension/
+│       └── MonitorExtension.swift — Separate extension process (always-on enforcement)
+│
+└── README.md                     ← This file
 ```
 
 ---
 
-## Prerequisites
+## Shared Firebase Backend
 
-| Tool | Version |
-|---|---|
-| Android Studio | Hedgehog (2023.1.1) or newer |
-| Android Gradle Plugin | 8.2.0+ |
-| Kotlin | 1.9.21+ |
-| Min Android on child's device | 8.0 (API 26) |
-| Firebase account | Free Spark plan is sufficient |
+Both apps write to the same Firestore project. The schema is designed so the parent dashboard (`parent-dashboard.html`) can read data from either platform transparently.
 
----
+```
+families/
+  {parentUid}/
+    children/
+      {childUid}/
+        profile/info              — DeviceProfile (platform field: "android" or "ios")
+        appUsage/{date_pkg}       — AppUsageRecord
+        appMessages/{id}          — AppMessage (Android only)
+        sms/{id}                  — SmsRecord (Android only)
+        calls/{id}                — CallRecord (Android only)
+        alerts/{id}               — AlertRecord (both platforms)
+        blockedApps/{pkg}         — BlockedApp (parent writes → child reads)
+        screenTimeLimits/limits   — ScreenTimeLimit (parent writes → child reads)
+```
 
-## Setup Guide
-
-### Step 1: Firebase Project
-
-1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a new project named **ParentGuard**.
-2. Under **Authentication → Sign-in method**, enable **Email/Password**.
-3. Under **Firestore Database**, click **Create database** and choose **Production mode**.
-4. Under **Project settings → Your apps**, click the Android icon. Register the app with package name `com.parentguard.monitor`, then download `google-services.json` and place it in the `app/` directory.
-
-### Step 2: Firestore Security Rules
-
-In the Firebase console under **Firestore → Rules**, replace the default rules with:
+### Firestore Security Rules
 
 ```javascript
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Parent account reads all data for their family
+    // Parent reads everything in their family
     match /families/{familyId}/children/{childId}/{document=**} {
-      allow read: if request.auth != null
-                  && request.auth.uid == familyId;
+      allow read: if request.auth != null && request.auth.uid == familyId;
     }
 
-    // Child device writes only to its own sub-documents
+    // Child writes its own monitoring data
     match /families/{familyId}/children/{childId}/sms/{doc} {
-      allow write: if request.auth != null
-                   && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == childId;
     }
     match /families/{familyId}/children/{childId}/calls/{doc} {
-      allow write: if request.auth != null
-                   && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == childId;
     }
     match /families/{familyId}/children/{childId}/appMessages/{doc} {
-      allow write: if request.auth != null
-                   && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == childId;
     }
     match /families/{familyId}/children/{childId}/appUsage/{doc} {
-      allow write: if request.auth != null
-                   && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == childId;
     }
     match /families/{familyId}/children/{childId}/profile/{doc} {
-      allow write: if request.auth != null
-                   && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == childId;
+    }
+    match /families/{familyId}/children/{childId}/alerts/{doc} {
+      allow write: if request.auth != null && request.auth.uid == childId;
     }
 
-    // Parent writes controls; child reads them
+    // Parent writes controls; child only reads them
     match /families/{familyId}/children/{childId}/blockedApps/{doc} {
-      allow read:  if request.auth != null
-                   && request.auth.uid == childId;
-      allow write: if request.auth != null
-                   && request.auth.uid == familyId;
+      allow read:  if request.auth != null && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == familyId;
     }
     match /families/{familyId}/children/{childId}/screenTimeLimits/{doc} {
-      allow read:  if request.auth != null
-                   && request.auth.uid == childId;
-      allow write: if request.auth != null
-                   && request.auth.uid == familyId;
+      allow read:  if request.auth != null && request.auth.uid == childId;
+      allow write: if request.auth != null && request.auth.uid == familyId;
     }
   }
 }
 ```
 
-> **Why these rules matter:** without them, any authenticated user could read any family's data. The rules above ensure only the parent UID (`familyId`) can read monitoring data, and only the child UID (`childId`) can write to its own collections.
+---
 
-### Step 3: Build the Android App
+## Background Execution — How Each Platform Stays Alive
 
+### Android
+
+Android gives apps more background latitude than iOS. ParentGuard uses a **two-layer** strategy so monitoring survives even aggressive battery optimizers (Xiaomi, Huawei, Samsung power-saving modes):
+
+```
+Layer 1 — Foreground Service (MonitoringService.kt)
+  • Runs continuously as a foreground service
+  • Android requires a persistent notification (visible to child — by design)
+  • START_STICKY: system restarts it automatically if killed
+  • BootReceiver: restarts it after device reboot
+  • Sync loop: SMS/calls every 15 min, app usage every 1 hour
+
+Layer 2 — WorkManager (SyncWorker.kt)
+  • Scheduled by MonitoringService on start AND by BootReceiver on boot
+  • Runs every 15 minutes via the Android OS job scheduler
+  • If Layer 1 is killed, SyncWorker fires and re-starts MonitoringService
+  • Constrained to network-connected windows; retries with back-off on failure
+  • SyncWorker.schedulePeriodicSync(context) is idempotent — safe to call repeatedly
+
+Layer 3 — BroadcastReceiver (SmsReceiver.kt)
+  • Intercepts incoming SMS in real-time regardless of service state
+  • Uploads immediately to Firebase on a short-lived IO coroutine
+```
+
+**Battery optimizer note:** Go to Settings → Battery → Battery optimisation on the child's device and set ParentGuard to "Don't optimise". On Samsung: also enable it in Settings → Device Care → Battery → Background usage limits. On Xiaomi: Settings → Apps → Manage apps → ParentGuard → Battery saver → No restrictions + enable Autostart.
+
+### iOS
+
+iOS suspends apps when they enter the background. Background execution is system-managed and time-limited. ParentGuard uses **three mechanisms**:
+
+```
+Mechanism 1 — BGAppRefreshTask ("com.parentguard.monitor.sync")
+  • Registered in AppDelegate, declared in Info.plist
+  • Scheduled every time the app backgrounds: scheduleAppRefresh()
+  • System decides when to actually run (typically ~15–30 min, may be longer)
+  • ~30 seconds of execution time
+  • Performs: heartbeat upload + fetch updated blocked apps + screen time limits
+  • Always re-schedules itself to maintain the chain
+
+Mechanism 2 — BGProcessingTask ("com.parentguard.monitor.longsync")
+  • Runs when device is idle, often plugged in
+  • Several minutes of execution time
+  • Performs: batch upload of usage records
+  • Also re-schedules itself
+
+Mechanism 3 — DeviceActivityMonitorExtension (MOST IMPORTANT)
+  • A SEPARATE PROCESS — runs independently of the main app
+  • Launched by the system when usage thresholds are reached
+  • Receives intervalDidStart, intervalDidEnd, eventDidReachThreshold callbacks
+  • Enforces restrictions (shields apps) and uploads alerts WITHOUT the app running
+  • This is why iOS monitoring works even when the app is killed
+  • The extension shares data with the main app via a shared App Group
+```
+
+**iOS limitation:** The system decides when BGTasks run. You cannot guarantee a precise 15-minute interval. DeviceActivityMonitor is the reliable always-on component; BGTask is for data sync.
+
+---
+
+## Android Setup Guide
+
+### Prerequisites
+- Android Studio Hedgehog (2023.1.1) or newer
+- Android 8.0+ (API 26) on the child's device
+
+### 1. Firebase Project
+1. Create a Firebase project at [console.firebase.google.com](https://console.firebase.google.com)
+2. Enable Authentication → Email/Password
+3. Create Firestore in production mode
+4. Download `google-services.json` → place in `ParentGuard-Android/app/`
+5. Apply the security rules above
+
+### 2. Build
 ```bash
-# Clone or copy the project, then open in Android Studio
-# Sync Gradle (it will download dependencies automatically)
-
-# Build a debug APK
+cd ParentGuard-Android
 ./gradlew assembleDebug
-
 # Output: app/build/outputs/apk/debug/app-debug.apk
 ```
 
-For a production release, use `assembleRelease` with a signing keystore configured in `build.gradle`.
+### 3. Install on Child's Device (parent-run)
+1. Enable "Install unknown apps" on the child's device
+2. Install the APK
+3. Run the setup wizard — it guides through:
+   - Entering the Family Code (parent's Firebase UID)
+   - Runtime permissions (SMS, Call Log, Contacts, Notifications)
+   - Usage Access (system settings)
+   - Notification Access (for WhatsApp, Telegram, Discord, etc.)
+   - Two Accessibility Services (App Blocker + Message Reader)
 
-### Step 4: Install on Child's Device
-
-All of these steps should be performed by a parent.
-
-1. On the child's device, go to **Settings → Security** and enable **Install unknown apps** for your file manager or browser.
-2. Transfer `app-debug.apk` to the child's device (ADB, USB, or cloud storage) and install it.
-3. Open **ParentGuard**. The setup wizard will guide you through four steps:
-
-   | Step | What to do |
-   |---|---|
-   | **1 — Link family** | Enter the Family Code (your Firebase UID from the parent dashboard) and the child's name |
-   | **2 — Runtime permissions** | Grant SMS, Call Log, Contacts, and Notifications when prompted |
-   | **3 — Usage Access** | In the system settings screen that opens, find ParentGuard and enable it |
-   | **4 — Notification Access** | In the system settings screen, enable **ParentGuard Notification Monitor** — this is required for WhatsApp, Telegram, Discord, and all other third-party messaging apps |
-   | **5 — Accessibility Services** | Enable **both** ParentGuard services: *App Monitor* (blocking) and *Message Reader* (sent messages) |
-
-4. After all steps complete, `SetupActivity` starts `MonitoringService` and exits. The child will see a persistent notification reading "ParentGuard Active — Device monitoring is on."
-
-> **Note:** Android 13+ (API 33) requires a runtime `POST_NOTIFICATIONS` permission grant before the foreground notification can be shown. The setup wizard requests this automatically.
-
-### Step 5: Open the Parent Dashboard
-
-Open `parent-dashboard.html` in any modern browser for the monitoring interface.
-
-**For production:** host it on Firebase Hosting (`firebase deploy --only hosting`) and wire it up to your Firestore project using the Firebase JS SDK. The dashboard currently uses static demo data; replace the `APP_MSGS`, `SMS_DATA`, `CALLS_DATA`, and `USAGE_DATA` arrays with live Firestore queries.
+### Monitored Messaging Apps
+WhatsApp · WhatsApp Business · WeChat · Telegram · Messenger · Snapchat · Instagram · Signal · Session · Discord · Slack · Microsoft Teams · Viber · LINE · Kik
 
 ---
 
-## Monitored Messaging Apps
+## iOS Setup Guide
 
-| App | Package | Incoming msgs | Sent msgs | Privacy mode |
-|---|---|---|---|---|
-| WhatsApp | `com.whatsapp` | ✅ Notification | ✅ Accessibility | — |
-| WhatsApp Business | `com.whatsapp.w4b` | ✅ Notification | ✅ Accessibility | — |
-| WeChat | `com.tencent.mm` | ✅ Notification | ✅ Accessibility | — |
-| Telegram | `org.telegram.messenger` | ✅ Notification | ⚠️ Partial (canvas UI) | — |
-| Messenger | `com.facebook.orca` | ✅ Notification | ✅ Accessibility | — |
-| Snapchat | `com.snapchat.android` | ✅ Notification | ✅ Accessibility | 🔒 Hides content by default |
-| Instagram | `com.instagram.android` | ✅ Notification | ✅ Accessibility | — |
-| Signal | `org.thoughtcrime.securesms` | ✅ Notification | ✅ Accessibility | 🔒 Hides content when privacy mode on |
-| Session | `network.loki.messenger` | ✅ Notification | ✅ Accessibility | 🔒 May hide content |
-| Discord | `com.discord` | ✅ Notification | ✅ Accessibility | — |
-| Slack | `com.Slack` | ✅ Notification | ✅ Accessibility | — |
-| Microsoft Teams | `com.microsoft.teams` | ✅ Notification | ✅ Accessibility | — |
+### Prerequisites
+- Xcode 15.0 or newer (macOS 13.5+)
+- iOS 16.0+ on the child's iPhone
+- Apple Developer account (paid, $99/year)
+- **`com.apple.developer.family-controls` entitlement from Apple** — request at [developer.apple.com/contact/request/family-controls-distribution](https://developer.apple.com/contact/request/family-controls-distribution). Without this, FamilyControls APIs will not work.
 
-**Privacy mode** means the app posts notifications without message text (e.g. "New message"). The dashboard marks these as `[Content hidden by App]`. To see content, open the messaging app's notification settings on the child's device and set previews to **Show**.
+### 1. Firebase Project (same as Android or shared)
+1. In your Firebase project, add an iOS app with bundle ID `com.parentguard.monitor`
+2. Download `GoogleService-Info.plist`
+3. Add it to **both** the main app target AND the DeviceActivityExtension target in Xcode
 
----
+### 2. Xcode Project Setup
+```bash
+cd ParentGuard-iOS
+open ParentGuard.xcodeproj   # or create a new project and add the Swift files
+```
 
-## How Message Capture Works
+In Xcode:
 
-Two Android services work together to capture the full conversation:
+1. **Add Swift Package dependencies** (File → Add Package Dependencies):
+   - `https://github.com/firebase/firebase-ios-sdk` — select FirebaseAuth, FirebaseFirestore, FirebaseMessaging
 
-### Incoming messages — `MessagingNotificationListener`
+2. **Create the DeviceActivityExtension target** (File → New → Target → Device Activity Monitor Extension):
+   - Name: `DeviceActivityExtension`
+   - Add `MonitorExtension.swift` from `DeviceActivityExtension/`
+   - Add `GoogleService-Info.plist` to this target
+   - Add FirebaseFirestore + FirebaseAuth packages to this target
 
-Extends `NotificationListenerService`. Android delivers a copy of every notification to this service after the user grants Notification Access. For each notification from a monitored package, it extracts:
+3. **App Groups** (Signing & Capabilities → + Capability → App Groups for BOTH targets):
+   - `group.com.parentguard.monitor`
 
-- **MessagingStyle notifications** (WhatsApp, Telegram, Messenger): rich per-message bundles with individual sender names and timestamps.
-- **Standard / BigText notifications** (Discord, Slack, Teams): title as sender, body as text.
-- **Grouped notifications**: skips the group-summary notification and processes only the individual message notifications to avoid duplicates.
+4. **Entitlements** (Signing & Capabilities → + Capability for main target):
+   - `Family Controls` (requires Apple approval — see Prerequisites)
 
-A `LinkedHashMap`-based dedup window (10 seconds) prevents re-uploading the same notification if the app updates it.
+5. **Info.plist** — ensure `BGTaskSchedulerPermittedIdentifiers` contains:
+   - `com.parentguard.monitor.sync`
+   - `com.parentguard.monitor.longsync`
+   - And `UIBackgroundModes` contains `fetch`, `processing`, `remote-notification`
 
-### Sent messages — `AppReadingAccessibilityService`
+### 3. Build and Install
+```bash
+# Build for a connected device (simulator doesn't support FamilyControls)
+xcodebuild -scheme ParentGuard \
+           -destination 'platform=iOS,name=Emma iPhone' \
+           -configuration Debug \
+           build
+```
+Or press ⌘R in Xcode with the child's iPhone connected.
 
-Extends `AccessibilityService`. When the child opens a messaging app, this service receives `TYPE_WINDOW_CONTENT_CHANGED` events and walks the view tree looking for `TextView` nodes that match message bubble heuristics — filtering out compose boxes, toolbars, and navigation elements. Detected direction (SENT vs RECEIVED) is determined by matching known outgoing-bubble resource IDs per app.
-
-Limitations:
-- Telegram uses a canvas-drawn UI with minimal view-tree content. Sent messages in Telegram are captured only partially.
-- View IDs are heuristics and may break on major app updates. Incoming-only capture via the notification listener is unaffected by this.
-
----
-
-## Parental Controls
-
-### App Blocking
-
-Parents add apps to the block list from the dashboard. The list is synced to Firestore and pushed to the child's device via a real-time snapshot listener in `MonitoringService`. When the child opens a blocked app, `AppBlockerAccessibilityService` detects the `TYPE_WINDOW_STATE_CHANGED` event, navigates to the home screen, and launches `AppBlockedActivity` — a full-screen overlay the child cannot dismiss.
-
-Blocking can be configured:
-- **All day** — app is blocked at all times
-- **Scheduled** — app is blocked between two times (supports ranges crossing midnight, e.g. 10 PM – 7 AM)
-
-### Screen Time
-
-A daily minute limit is stored in Firestore under `screenTimeLimits`. `MonitoringService` compares actual usage (from `UsageStatsManager`) to the limit on each hourly sync. When the limit is reached, `AppBlockerAccessibilityService` begins blocking all apps except the phone dialler and this app itself.
-
-### Bedtime Mode
-
-A start and end time are stored in `screenTimeLimits`. `AppBlockerAccessibilityService` checks the current time against the bedtime window on every foreground-app-change event and blocks all apps during that window.
+### 4. Setup on Child's iPhone (parent-run)
+The setup wizard guides through:
+1. Enter Family Code (parent's Firebase UID from the parent dashboard)
+2. Enter child's name
+3. Grant Screen Time access (FamilyControls system prompt — tap **Allow**)
+4. Allow notifications
 
 ---
 
-## Required Permissions
+## Permissions Reference
 
-| Permission | Type | Purpose |
-|---|---|---|
-| `READ_SMS` | Runtime | Read existing SMS threads |
-| `RECEIVE_SMS` | Runtime | Intercept incoming SMS in real time |
-| `READ_CALL_LOG` | Runtime | Access call history |
-| `READ_CONTACTS` | Runtime | Resolve numbers to contact names |
-| `POST_NOTIFICATIONS` | Runtime (API 33+) | Show the foreground monitoring notification |
-| `PACKAGE_USAGE_STATS` | Special (system settings) | Read per-app screen time via UsageStatsManager |
-| `FOREGROUND_SERVICE` | Normal | Declare the monitoring service as foreground |
-| `FOREGROUND_SERVICE_DATA_SYNC` | Normal | Required sub-type for API 34+ foreground services |
-| `RECEIVE_BOOT_COMPLETED` | Normal | Restart monitoring service after reboot |
-| `INTERNET` | Normal | Upload data to Firebase |
-| `ACCESS_NETWORK_STATE` | Normal | Check connectivity before upload attempts |
-| `BIND_NOTIFICATION_LISTENER_SERVICE` | Special (system settings) | Read notifications from third-party messaging apps |
-| `BIND_ACCESSIBILITY_SERVICE` | Special (system settings) | App blocking + sent message reading |
+### Android
+| Permission | Purpose |
+|---|---|
+| `READ_SMS` / `RECEIVE_SMS` | Read and intercept text messages |
+| `READ_CALL_LOG` | Access call history |
+| `READ_CONTACTS` | Resolve numbers to contact names |
+| `PACKAGE_USAGE_STATS` | Read per-app screen time |
+| `POST_NOTIFICATIONS` (API 33+) | Show foreground notification |
+| `FOREGROUND_SERVICE` | Persistent monitoring service |
+| `FOREGROUND_SERVICE_DATA_SYNC` | Required sub-type for API 34+ |
+| `RECEIVE_BOOT_COMPLETED` | Restart after reboot |
+| `INTERNET` / `ACCESS_NETWORK_STATE` | Upload to Firebase |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Read 3rd-party app notifications |
+| `BIND_ACCESSIBILITY_SERVICE` (×2) | App blocking + sent message reading |
 
----
-
-## Security Notes
-
-### Authentication and data isolation
-
-- Every Firestore write is guarded by `FirebaseRepository.requireAuth()`, which throws immediately if `FirebaseAuth.currentUser` is null, `familyId` is blank, or `childId` is blank — before any network call is made.
-- Firestore security rules (see Step 2) enforce that a child UID can only write to its own path, and only the parent UID can read monitoring data.
-- No two families can access each other's data regardless of client-side state.
-
-### Batch write safety
-
-Firestore enforces a hard limit of 500 operations per batch. All upload functions use a shared `batchWrite()` helper that chunks records into groups of 400. Additionally, `DataCollectors` caps the initial sync lookback to the most recent 30 days, preventing a first-run batch that could contain years of SMS and call history.
-
-### Dashboard XSS protection
-
-All user-controlled strings rendered into `innerHTML` (contact names, message bodies, phone numbers, app names entered by the parent) are passed through `escHtml()`, which escapes `& < > " '`. Interactive elements use `data-*` attributes and a central event delegation handler — no inline `onclick` attributes with interpolated data exist anywhere in the rendered HTML. A `Content-Security-Policy` meta tag restricts script and style sources.
-
-### Coroutine lifecycle
-
-Both `MessagingNotificationListener` and `AppReadingAccessibilityService` use a `SupervisorJob` bound to their `onDestroy()` lifecycle. The job is cancelled on destroy, stopping any in-flight Firebase uploads and preventing memory or thread leaks after the service is unbound.
-
-### Message deduplication
-
-`MessagingNotificationListener` uses a time-windowed `LinkedHashMap` keyed on the notification's composite key to prevent double-uploading when apps refresh their notifications. `AppReadingAccessibilityService` uses a full-text LRU `LinkedHashMap` (capped at 500 entries) keyed on `packageName::messageText` — replacing the previous `hashCode()`-based approach, which was susceptible to hash collisions silently dropping real messages.
+### iOS
+| Permission / Framework | Purpose |
+|---|---|
+| FamilyControls (entitlement) | Monitor and restrict app usage |
+| DeviceActivityMonitor (extension) | Usage callbacks in separate process |
+| ManagedSettings | Apply restrictions (block apps, web) |
+| BGAppRefreshTask | Periodic short background syncs |
+| BGProcessingTask | Longer background data uploads |
+| UNUserNotificationCenter | Send usage warnings and parent alerts |
+| Push notifications | Silent push to trigger background fetch |
 
 ---
 
 ## Technical Reference
 
+### Android
 | Property | Value |
 |---|---|
-| Min SDK | API 26 (Android 8.0 Oreo) |
+| Min SDK | API 26 (Android 8.0) |
 | Target SDK | API 34 (Android 14) |
 | Language | Kotlin 1.9 |
-| Build system | Gradle 8.2 / AGP 8.2.0 |
-| Backend | Firebase Firestore + Firebase Auth |
-| SMS/Call sync interval | Every 15 minutes |
-| App usage sync interval | Every 1 hour |
-| Real-time SMS capture | Immediate (BroadcastReceiver) |
-| Real-time app message capture | Immediate (NotificationListenerService) |
-| Initial sync lookback cap | 30 days |
-| Firestore batch size | 400 operations (hard limit is 500) |
-| Message dedup window | 10 seconds (notification listener) |
-| Accessibility dedup cache | 500 entries LRU (screen reader) |
+| Background layer 1 | Foreground service (continuous) |
+| Background layer 2 | WorkManager (15-min periodic) |
+| Background layer 3 | BroadcastReceiver (real-time SMS) |
+| Firestore batch size | 400 ops (hard limit: 500) |
+| Initial sync lookback | 30 days |
 
-### Firestore data structure
-
-```
-families/
-  {parentUid}/                        ← familyId = parent's Firebase UID
-    children/
-      {childUid}/                     ← childId = child device's Firebase UID
-        profile/
-          info                        ← DeviceProfile document
-        sms/
-          {smsId}                     ← SmsRecord documents
-        calls/
-          {callId}                    ← CallRecord documents
-        appUsage/
-          {date}_{packageName}        ← AppUsageRecord documents
-        appMessages/
-          {uuid}                      ← AppMessage documents
-        blockedApps/
-          {packageName}               ← BlockedApp documents (parent writes, child reads)
-        screenTimeLimits/
-          limits                      ← ScreenTimeLimit document (parent writes, child reads)
-```
+### iOS
+| Property | Value |
+|---|---|
+| Min iOS | 16.0 |
+| Language | Swift 5.9, SwiftUI |
+| Background layer 1 | BGAppRefreshTask (~15–30 min) |
+| Background layer 2 | BGProcessingTask (idle/charging) |
+| Background layer 3 | DeviceActivityMonitorExtension (always-on, separate process) |
+| Background layer 4 | Silent push notifications |
+| Shared state | App Group UserDefaults (`group.com.parentguard.monitor`) |
+| Firestore batch size | 400 ops |
 
 ---
 
 ## Legal & Ethical Requirements
 
-> **This app is designed for parents monitoring their own minor children's devices.**
+> **This app is for parents monitoring their own minor children's devices.**
 
-- You must **own or have legal guardian authority** over the device being monitored.
-- **Monitoring must be disclosed.** Android's foreground service requirement ensures a persistent notification is always visible on the child's device. Do not attempt to hide or suppress this notification.
-- This app is **not** intended for monitoring spouses, partners, employees, adults, or anyone who has not given informed consent. Using it for those purposes may be illegal under wiretapping, electronic surveillance, or computer fraud laws in your jurisdiction.
-- Laws governing parental monitoring vary by country and, in the US, by state. Consult a legal professional if you are unsure about your obligations.
-- Consider age-appropriate monitoring. Older teenagers have a reasonable expectation of privacy. Having an open conversation with your child about what is monitored and why is strongly recommended.
+- You must own or have legal guardian authority over the monitored device.
+- **Monitoring must be disclosed.** Android maintains a persistent foreground notification. iOS shows a Screen Time access prompt that the child can see. Do not attempt to hide or suppress either.
+- This app is **not** for monitoring spouses, partners, employees, or adults without their explicit consent. Such use may violate wiretapping, electronic surveillance, or computer fraud laws.
+- Laws vary by jurisdiction. Consult a legal professional if unsure.
+- Have an open conversation with your child about what is monitored and why. Older teenagers have a reasonable expectation of privacy.
 
 ---
 
 ## Troubleshooting
 
-**The monitoring notification disappears after a few minutes.**  
-Battery optimisation is killing the foreground service. Go to **Settings → Battery → Battery optimisation** on the child's device, find ParentGuard, and set it to **Don't optimise**. On some manufacturers (Xiaomi, Huawei, OnePlus) there are additional auto-start and background task restrictions in the settings — enable ParentGuard in all of them.
+### Android
 
-**App messages aren't appearing in the dashboard.**  
-Check that Notification Access is granted: **Settings → Apps & Notifications → Special app access → Notification access → ParentGuard Notification Monitor** should be toggled on. If it was recently granted, restart the child's device.
+**Monitoring stops after a few hours.**  
+Aggressive battery optimizer is killing the foreground service. Set ParentGuard to "Don't optimise" in Settings → Battery → Battery optimisation. WorkManager will still sync every 15 minutes as a backstop even if the service is killed.
 
-**Sent messages are missing but received ones appear.**  
-Sent messages are captured by `AppReadingAccessibilityService`. Confirm both Accessibility Services are enabled in **Settings → Accessibility**. The *Message Reader* service is separate from the *App Monitor* service — both must be on.
+**App messages aren't captured.**  
+Check Notification Access: Settings → Apps → Special app access → Notification access → ParentGuard must be on. Then confirm both Accessibility Services are enabled (App Monitor + Message Reader).
 
-**Signal / Snapchat messages show `[Content hidden]`.**  
-Open the app on the child's device, go to its notification settings, and change the notification style to show message content (not just sender name or nothing). Signal: **Signal Settings → Notifications → Show → Name and message**. Snapchat: enable notification previews in Android system notification settings for Snapchat.
+**Signal/Snapchat messages show `[Content hidden]`.**  
+Open Signal → Settings → Notifications → Show → "Name and message". For Snapchat, enable notification previews in Android system notification settings.
 
-**Telegram sent messages are missing.**  
-Telegram renders its chat UI on a custom canvas, which exposes minimal content to the accessibility view tree. Incoming Telegram messages (via notifications) are captured normally. Full sent-message capture for Telegram is a known limitation.
+### iOS
 
-**The dashboard shows demo data and not live data.**  
-The HTML dashboard currently ships with static demo data. To connect it to Firebase, add the Firebase JS SDK and replace the `APP_MSGS`, `SMS_DATA`, `CALLS_DATA`, and `USAGE_DATA` constants with live `onSnapshot()` queries against your Firestore collections.
+**FamilyControls authorization fails.**  
+You need the `com.apple.developer.family-controls` entitlement. Request it at [developer.apple.com/contact/request/family-controls-distribution](https://developer.apple.com/contact/request/family-controls-distribution). Without it, the system prompt will not appear.
 
-**Build fails with `google-services.json not found`.**  
-Download `google-services.json` from your Firebase project (**Project settings → Your apps → Android app → Download google-services.json**) and place it in the `app/` directory, not the project root.
+**BGTasks don't seem to run.**  
+iOS throttles BGTasks heavily. In Xcode you can force a BGAppRefreshTask to fire for testing: pause the app in the debugger and run `e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.parentguard.monitor.sync"]`. In production, tasks will fire on their own schedule.
+
+**The DeviceActivityExtension doesn't seem to block apps.**  
+Verify: (1) the App Group is added to both targets, (2) GoogleService-Info.plist is in the extension target, (3) the FamilyControls entitlement is in both targets' entitlements files, (4) `startMonitoring()` was called with the correct `DeviceActivityName`.
+
+**Usage data shows app categories but not specific app names.**  
+This is expected. Apple's privacy design makes app tokens opaque to third-party apps — you can block them (via FamilyActivityPicker selection) but you cannot programmatically read bundle IDs from tokens. The DeviceActivityReport view renders usage details using Apple's own UI.

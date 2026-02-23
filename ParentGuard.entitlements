@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  ParentGuard.entitlements
+  ─────────────────────────
+  IMPORTANT: com.apple.developer.family-controls requires a special entitlement
+  from Apple. You must request it at:
+    https://developer.apple.com/contact/request/family-controls-distribution
+
+  Without this entitlement, FamilyControls APIs (app blocking, usage monitoring,
+  DeviceActivityMonitor) will not function. The app will build and install, but
+  AuthorizationCenter.shared.requestAuthorization() will fail.
+
+  Apple typically approves this for:
+  • Parental control apps (exactly our use case)
+  • Screen time management apps
+  • Focus/productivity apps with robust privacy policies
+
+  The entitlement profile must be downloaded from developer.apple.com and added
+  to your Xcode project's Signing & Capabilities tab.
+-->
+<dict>
+    <!--
+      The primary entitlement for parental controls. Grants access to:
+        FamilyControls       — request authorization to monitor/block apps
+        DeviceActivityMonitor— receive usage callbacks in the extension
+        ManagedSettings      — apply app/web/communication restrictions
+    -->
+    <key>com.apple.developer.family-controls</key>
+    <true/>
+
+    <!-- Standard entitlements -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <!--
+          Shared App Group between the main app and the DeviceActivityExtension.
+          Both targets must include this group. Used to share:
+            • AppPreferences (UserDefaults)
+            • Firestore upload queue
+            • Blocked app identifiers
+          Replace "YOUR_TEAM_ID" with your Apple Developer Team ID.
+        -->
+        <string>group.com.parentguard.monitor</string>
+    </array>
+
+    <key>com.apple.developer.aps-environment</key>
+    <string>development</string>  <!-- change to "production" for App Store builds -->
+</dict>
+</plist>

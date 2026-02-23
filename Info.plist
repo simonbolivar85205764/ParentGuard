@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Info.plist — ParentGuard iOS
+  ─────────────────────────────
+  This file contains the critical keys needed for background execution and
+  the privacy usage-description strings required by App Store Review.
+
+  In Xcode: these are managed in the target's Info tab. The XML below is
+  the canonical representation; Xcode merges it automatically.
+-->
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>ParentGuard</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>com.parentguard.monitor</string>
+
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    </array>
+
+    <!-- ── Background Execution ──────────────────────────────────────────── -->
+
+    <!--
+      UIBackgroundModes: declares which background capabilities this app uses.
+      "fetch"      — BGAppRefreshTask (short periodic syncs, ~30 seconds)
+      "processing" — BGProcessingTask (longer operations, plugged-in/idle)
+      "remote-notification" — silent push notifications to trigger background fetch
+    -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string>
+        <string>processing</string>
+        <string>remote-notification</string>
+    </array>
+
+    <!--
+      BGTaskSchedulerPermittedIdentifiers: task IDs must match exactly what you
+      call BGTaskScheduler.shared.register(forTaskWithIdentifier:...) with.
+    -->
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.parentguard.monitor.sync</string>         <!-- BGAppRefreshTask: short 15-min sync -->
+        <string>com.parentguard.monitor.longsync</string>     <!-- BGProcessingTask: longer operations -->
+    </array>
+
+    <!-- ── Privacy Usage Descriptions (required by App Store / iOS) ─────── -->
+    <!--
+      All of these strings appear in the iOS permission prompt shown to the user.
+      They must honestly describe how the permission is used.
+      Apple Review will reject vague or misleading strings.
+    -->
+
+    <!-- Screen Time / FamilyControls — shown when requestAuthorization() is called -->
+    <!-- Note: FamilyControls does not have a separate plist key; the authorization
+         prompt text is controlled by Apple. Include a clear app description instead. -->
+
+    <key>NSUserTrackingUsageDescription</key>
+    <string>ParentGuard does not track you across apps or websites. This app monitors your child's device usage only within the Family Controls framework, with your explicit consent.</string>
+
+    <!-- Push notifications (for parent alerts) -->
+    <!-- Handled by UNUserNotificationCenter.requestAuthorization() at runtime. -->
+
+    <!-- ── App Transport Security ─────────────────────────────────────────── -->
+    <!--
+      Firebase requires HTTPS only — the default ATS configuration is correct.
+      Do NOT add NSAllowsArbitraryLoads.
+    -->
+
+    <!-- ── Minimum OS ─────────────────────────────────────────────────────── -->
+    <key>MinimumOSVersion</key>
+    <string>16.0</string>
+
+</dict>
+</plist>
